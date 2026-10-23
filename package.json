@@ -1,0 +1,21 @@
+{
+  "name": "tarjousvahti",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Hilma-hankintailmoitusten seuranta ja AI-pisteytys kohdeyrityksen näkökulmasta (POC)",
+  "workspaces": [
+    "packages/core",
+    "web"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "build": "npm run build -w packages/core && npm run build -w web",
+    "typecheck": "npm run build -w packages/core && npm run typecheck --workspaces --if-present && tsc -p tsconfig.scripts.json",
+    "test": "npm run test -w packages/core",
+    "dev:web": "npm run dev -w web",
+    "data:build": "npm run build -w packages/core && node --experimental-strip-types scripts/build-data.ts web/public/data.json"
+  }
+}

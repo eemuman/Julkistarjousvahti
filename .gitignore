@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.local
+*.log
+.DS_Store
+# Generoidaan buildissa (npm run fixtures -w web), päivämäärät suhteessa build-hetkeen
+web/public/sample.json
+# Eräajon tulos (npm run data:build), generoidaan GitHub Actionsissa eikä kuulu versionhallintaan
+web/public/data.json
+# Pages-testibuildi (npm run build -w web -- --outDir dist-pages), ei kuulu versionhallintaan
+web/dist-pages/

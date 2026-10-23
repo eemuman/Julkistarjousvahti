@@ -1,0 +1,89 @@
+name: Päivittäinen data ja Pages
+
+# Ajastus 6.17 eikä tasan: tasatunnin ajot ruuhkautuvat GitHubissa ja myöhästyvät usein.
+# Aikavyöhyke on Helsinki, joten ajo on arkisin aamulla suomalaista aikaa.
+on:
+  schedule:
+    - cron: "17 6 * * 1-5"
+      timezone: "Europe/Helsinki"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Vain yksi julkaisu kerrallaan. Kesken ajon olevaa julkaisua ei peruuteta.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Gemini-ilmaistason yksittäinen kutsu voi kestää 20–25 s, joten 150 arviota (rinnakkaisuus 2) vie yli 30 min.
+    timeout-minutes: 60
+    outputs:
+      # Eräajon paluukoodi (scripts/build-data.ts). Deploy-job lukee sen ja merkitsee ajon punaiseksi koodilla 3.
+      code: ${{ steps.ai.outputs.code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w packages/core
+      - run: npm test
+      # Selvittää julkaistun sivun osoitteen (output base_url). Tarvitaan ennen eräajoa, jotta edellinen data.json saadaan luettua.
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+        id: pages
+      # Paluukoodi talteen (output code). Koodit 1 ja 2 pysäyttävät jobin, eikä julkaisu tapahdu, jolloin
+      # GitHub Pagesissa jää edellinen toimiva versio näkyviin. Koodi 3 (pysyvä AI-virhe) jatkaa, koska data on kelvollinen
+      # ja julkaistaan. Deploy-jobi merkitsee ajon punaiseksi koodilla 3 julkaisun jälkeen.
+      # Secretit (HILMA_API_KEY, GEMINI_API_KEY) on maskattu lokissa, eivätkä ne tulostu.
+      # PREVIOUS_DATA: edellinen julkaistu data. Arvioita käytetään uudelleen, jos ilmoitus ja arviointitapa eivät ole muuttuneet.
+      # Ensimmäisellä julkaisulla tiedostoa ei ole (404), jolloin kaikki arvioidaan.
+      - name: Eräajo (Hilma + Gemini → data.json)
+        id: ai
+        shell: bash
+        run: |
+          set +e
+          node --experimental-strip-types scripts/build-data.ts web/public/data.json 7
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          [ $code -eq 0 ] || [ $code -eq 3 ] || exit $code
+        env:
+          HILMA_API_KEY: ${{ secrets.HILMA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Tyhjä muuttuja (ei asetettu repo-muuttujaa) tulkitaan koodissa oletukseksi.
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          AI_MAX_ASSESSMENTS: ${{ vars.AI_MAX_ASSESSMENTS }}
+          PREVIOUS_DATA: ${{ steps.pages.outputs.base_url }}/data.json
+      - name: Web (staattinen tila)
+        run: npm run build -w web
+        env:
+          # Alipolku configure-pagesista (esim. /<repo>), toimii kaikilla triggereillä myös ajastetussa ajossa.
+          VITE_BASE: ${{ steps.pages.outputs.base_path }}/
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+      # Data julkaistiin, mutta erä pysähtyi pysyvään AI-virheeseen (esim. väärä avain). Ajo merkitään punaiseksi.
+      - name: Merkitse ajo epäonnistuneeksi (pysyvä AI-virhe)
+        if: always() && needs.build.outputs.code == '3'
+        run: |
+          echo "::error::Pysyvä AI-virhe pysäytti eräajon. Data julkaistiin, mutta tarkista AI-avain ja malli (GEMINI_API_KEY, GEMINI_MODEL)."
+          exit 1
